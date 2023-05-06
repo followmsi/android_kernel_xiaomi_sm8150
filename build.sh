@@ -1,52 +1,65 @@
-DATE=$(date +"%Y%m%d")
-VERSION=$(git rev-parse --short HEAD)
-KERNEL_NAME=Evasi0nKernel-cepheus-"$DATE"
+#!/bin/bash
 
-export KERNEL_PATH=$PWD
-export ANYKERNEL_PATH=~/Anykernel3
-export CLANG_PATH=~/prelude-clang
-export PATH=${CLANG_PATH}/bin:${PATH}
-export CLANG_TRIPLE=aarch64-linux-gnu-
-export CROSS_COMPILE=aarch64-linux-gnu-
-export CROSS_COMPILE_ARM32=arm-linux-gnueabi-
-export CLANG_PREBUILT_BIN=${CLANG_PATH}/bin
-export CC="ccache clang"
-export CXX="ccache clang++"
-export LD=ld.lld
+#set -e
+
+KERNEL_DEFCONFIG=cepheus_defconfig
+ANYKERNEL3_DIR=$PWD/AnyKernel3/
+FINAL_KERNEL_ZIP=cepheus_A13_raystef66.zip
+
+# paths
+TC="/home/raystef66/kernel/prebuilts"
+
+PATH=${TC}/clang-r416183b1/bin:${TC}/aarch64/bin:${TC}/arm/bin:$PATH
+
 export LLVM=1
-export LLVM_IAS=1
+export CC=clang
+export CROSS_COMPILE=aarch64-linux-gnu-
 export ARCH=arm64
-export SUBARCH=arm64
+export USE_CCACHE=1
 
-echo "===================Setup Environment==================="
-git clone --depth=1 https://gitlab.com/jjpprrrr/prelude-clang.git $CLANG_PATH
-git clone https://github.com/osm0sis/AnyKernel3 $ANYKERNEL_PATH
-sh -c "$(curl -sSL https://github.com/akhilnarang/scripts/raw/master/setup/android_build_env.sh/)"
+# Speed up build process
+MAKE="./makeparallel"
 
-echo "=========================Clean========================="
-rm -rf $KERNEL_PATH/out/ *.zip
-make mrproper && git reset --hard HEAD
+make O=out ARCH=arm64 cepheus_defconfig
 
-echo "=========================Build========================="
-make O=out cepheus_defconfig
-make O=out | tee out/kernel.log
+START=$(date +"%s")
 
-if [ ! -e $KERNEL_PATH/out/arch/arm64/boot/Image.gz-dtb ]; then
-    echo "=======================FAILED!!!======================="
-    rm -rf $ANYKERNEL_PATH
-    make mrproper>/dev/null 2>&1
-    git reset --hard HEAD 2>&1
-    exit -1>/dev/null 2>&1
-fi
+make ARCH=arm64 \
+        O=out \
+        CC=clang \
+		AR=llvm-ar \
+        LD=ld.lld \
+        NM=llvm-nm \
+        OBJCOPY=llvm-objcopy \
+        OBJDUMP=llvm-objdump \
+        STRIP=llvm-strip \
+        -j$(nproc --all)
+               
 
-echo "=========================Patch========================="
-rm -r $ANYKERNEL_PATH/modules $ANYKERNEL_PATH/patch $ANYKERNEL_PATH/ramdisk
-cp $KERNEL_PATH/anykernel.sh $ANYKERNEL_PATH/
-cp $KERNEL_PATH/out/arch/arm64/boot/Image.gz-dtb $ANYKERNEL_PATH/
-cd $ANYKERNEL_PATH
-zip -r $KERNEL_NAME *
-mv $KERNEL_NAME.zip $KERNEL_PATH/out/
-cd $KERNEL_PATH
-#rm -rf $CLANG_PATH
-rm -rf $ANYKERNEL_PATH
-echo $KERNEL_NAME.zip
+echo -e "$yellow**** Verify Image.gz-dtb ****$nocol"
+ls $PWD/out/arch/arm64/boot/Image.gz-dtb
+
+echo -e "$yellow**** Verifying AnyKernel3 Directory ****$nocol"
+ls $ANYKERNEL3_DIR
+echo -e "$yellow**** Removing leftovers ****$nocol"
+rm -rf $ANYKERNEL3_DIR/Image.gz-dtb
+rm -rf $ANYKERNEL3_DIR/$FINAL_KERNEL_ZIP
+
+echo -e "$yellow**** Copying Image.gz-dtb ****$nocol"
+cp $PWD/out/arch/arm64/boot/Image.gz-dtb $ANYKERNEL3_DIR/
+
+echo -e "$yellow**** Time to zip up! ****$nocol"
+cd $ANYKERNEL3_DIR/
+zip -r9 $FINAL_KERNEL_ZIP * -x README $FINAL_KERNEL_ZIP
+cp $ANYKERNEL3_DIR/$FINAL_KERNEL_ZIP /home/raystef66/kernel/$FINAL_KERNEL_ZIP
+
+echo -e "$yellow**** Done, here is your checksum ****$nocol"
+cd ..
+rm -rf $ANYKERNEL3_DIR/$FINAL_KERNEL_ZIP
+rm -rf $ANYKERNEL3_DIR/Image.gz-dtb
+rm -rf out/
+
+END=$(date +"%s")
+DIFF=$((END - START))
+echo -e '\033[01;32m' "Kernel compiled successfully in $((DIFF / 60)) minute(s) and $((DIFF % 60)) seconds" || exit
+sha1sum $KERNELDIR/$FINAL_KERNEL_ZIP
